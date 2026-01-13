@@ -95,6 +95,20 @@ def upload_tb():
     year = request.form.get('year')
     
     if not year: return jsonify({"error": "Year required"}), 400
+
+    # --- NEW: Check Cache Optimization ---
+    # Check if a mapped file already exists for this year
+    mapped_filename = f"mapped_tb_{year}.xlsx"
+    mapped_path = os.path.join(OUTPUT_FOLDER, mapped_filename)
+
+    if os.path.exists(mapped_path):
+        print(f"[INFO] Mapping for {year} found. Skipping AI mapping.")
+        return jsonify({
+            "message": "Loaded from cache", 
+            "mapped_file_url": f"/download/{mapped_filename}",
+            "cached": True
+        })
+    # -------------------------------------
     
     filename = secure_filename(file.filename)
     filepath = os.path.join(UPLOAD_FOLDER, filename)
@@ -109,11 +123,12 @@ def upload_tb():
         mapped_file = logic.map_trial_balance(filepath, fs_json_path, year)
         return jsonify({
             "message": "Mapping Complete", 
-            "mapped_file_url": f"/download/{os.path.basename(mapped_file)}"
+            "mapped_file_url": f"/download/{os.path.basename(mapped_file)}",
+            "cached": False
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
+    
 @app.route('/api/generate-schedules', methods=['GET'])
 def get_schedules():
     """Step 3: Generate Dynamic Schedules from all mapped TBs"""
@@ -153,5 +168,22 @@ def calculate_valuation():
 def download_file(filename):
     return send_file(os.path.join(OUTPUT_FOLDER, filename), as_attachment=True)
 
+@app.route('/api/get-drilldown/<year>', methods=['GET'])
+def get_drilldown(year):
+    data = logic.get_mapping_details(year)
+    if data is None:
+        return jsonify({"error": "Data not found for this year"}), 404
+    return jsonify(data)
+
+@app.route('/api/update-mapping', methods=['POST'])
+def update_mapping_endpoint():
+    req = request.json
+    year = req.get('year')
+    updates = req.get('updates') # List of changes
+    
+    success = logic.update_mapping(year, updates)
+    if success:
+        return jsonify({"message": "Mapping updated successfully"})
+    return jsonify({"error": "Update failed"}), 500
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

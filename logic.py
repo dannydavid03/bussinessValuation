@@ -125,12 +125,93 @@ def map_trial_balance(tb_path, fs_json_path, year):
         df["Mapped_FS_Line"] = df["Description"].map(mapping).fillna("Unclassified")
         
         output_path = f"outputs/mapped_tb_{year}.xlsx"
-        df.to_excel(output_path, index=False)
+        df.to_json(f"outputs/mapped_tb_{year}.json", orient="records", indent=4)
+
+
         return output_path
     except Exception as e:
         print(f"Mapping Error: {e}")
         return None
+def get_mapping_details(year):
+    """
+    Returns data for the Drill Down UI.
+    """
+    # Load PDF Data
+    fs_path = f"outputs/extracted_data_{year}.json"
+    if not os.path.exists(fs_path): 
+        print(f"Missing FS Data: {fs_path}")
+        return None
 
+    # Load TB Data (JSON)
+    tb_map_path = f"outputs/mapped_tb_{year}.json"
+    if not os.path.exists(tb_map_path): 
+        print(f"Missing TB Data: {tb_map_path}")
+        return None # This prevents the crash if file is missing
+
+    with open(fs_path) as f: fs_data = json.load(f)
+    with open(tb_map_path) as f: tb_data = json.load(f)
+    
+    # ... [Rest of the aggregation logic from previous response] ...
+    calculated = {}
+    line_item_details = {}
+    
+    for entry in tb_data:
+        line = entry.get("Mapped_FS_Line", "Unclassified")
+        amount = entry.get("Net_Amount", 0)
+        
+        calculated[line] = calculated.get(line, 0) + amount
+        if line not in line_item_details: line_item_details[line] = []
+        line_item_details[line].append({
+            "account": entry.get("Description", "Unknown"),
+            "amount": amount
+        })
+
+    comparison = []
+    # Helper to get PDF targets
+    pdf_targets = {}
+    for cat in ["financial_position", "profit_loss"]:
+        if cat in fs_data:
+            for item in fs_data[cat]:
+                pdf_targets[item.get("line_item")] = item.get("current_year", 0)
+
+    # Compare all keys
+    all_keys = set(calculated.keys()).union(pdf_targets.keys())
+
+    for key in all_keys:
+        reported = pdf_targets.get(key) or 0  
+        actual = calculated.get(key) or 0
+        delta = reported - actual
+        
+        comparison.append({
+            "line_item": key,
+            "reported_value": reported,
+            "calculated_value": actual,
+            "delta": delta,
+            "is_mismatch": abs(delta) > 1.0,
+            "contributing_accounts": line_item_details.get(key, [])
+        })
+        
+    return comparison
+
+def update_mapping(year, updates):
+    """
+    Updates the JSON mapping file based on UI edits.
+    """
+    tb_map_path = f"outputs/mapped_tb_{year}.json"
+    if not os.path.exists(tb_map_path): return False
+    
+    with open(tb_map_path) as f: tb_data = json.load(f)
+    
+    update_dict = { u["account"]: u["new_line_item"] for u in updates }
+    
+    for entry in tb_data:
+        if entry["Description"] in update_dict:
+            entry["Mapped_FS_Line"] = update_dict[entry["Description"]]
+            
+    with open(tb_map_path, 'w') as f:
+        json.dump(tb_data, f, indent=4)
+        
+    return True
 # ==========================================
 # 3. SCHEDULES & VALUATION
 # ==========================================
